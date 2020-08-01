@@ -252,13 +252,13 @@ const struct spdk_nvmf_transport_ops spdk_nvmf_transport_ucx;
 // 	TAILQ_ENTRY(spdk_nvmf_tcp_qpair)	link;
 // };
 
-// struct spdk_nvmf_tcp_poll_group {
-// 	struct spdk_nvmf_transport_poll_group	group;
-// 	struct spdk_sock_group			*sock_group;
+struct spdk_nvmf_tcp_poll_group {
+	struct spdk_nvmf_transport_poll_group	group;
+	struct spdk_sock_group			*sock_group;
 
-// 	TAILQ_HEAD(, spdk_nvmf_tcp_qpair)	qpairs;
-// 	TAILQ_HEAD(, spdk_nvmf_tcp_qpair)	await_req;
-// };
+	TAILQ_HEAD(, spdk_nvmf_tcp_qpair)	qpairs;
+	TAILQ_HEAD(, spdk_nvmf_tcp_qpair)	await_req;
+};
 
 // struct spdk_nvmf_tcp_port {
 // 	const struct spdk_nvme_transport_id	*trid;
@@ -949,30 +949,30 @@ nvmf_ucx_create(struct spdk_nvmf_transport_opts *opts)
 // 	entry->tsas.tcp.sectype = SPDK_NVME_TCP_SECURITY_NONE;
 // }
 
-// static struct spdk_nvmf_transport_poll_group *
-// nvmf_tcp_poll_group_create(struct spdk_nvmf_transport *transport)
-// {
-// 	struct spdk_nvmf_tcp_poll_group *tgroup;
+static struct spdk_nvmf_transport_poll_group *
+nvmf_ucx_poll_group_create(struct spdk_nvmf_transport *transport)
+{
+	struct spdk_nvmf_ucx_poll_group *ugroup;
 
-// 	tgroup = calloc(1, sizeof(*tgroup));
-// 	if (!tgroup) {
-// 		return NULL;
-// 	}
+	ugroup = calloc(1, sizeof(*tgroup));
+	if (!ugroup) {
+		return NULL;
+	}
 
-// 	tgroup->sock_group = spdk_sock_group_create(&tgroup->group);
-// 	if (!tgroup->sock_group) {
-// 		goto cleanup;
-// 	}
+	ugroup->sock_group = spdk_sock_group_create(&ugroup->group);
+	if (!ugroup->sock_group) {
+		goto cleanup;
+	}
 
-// 	TAILQ_INIT(&tgroup->qpairs);
-// 	TAILQ_INIT(&tgroup->await_req);
+	TAILQ_INIT(&ugroup->qpairs);
+	TAILQ_INIT(&ugroup->await_req);
 
-// 	return &tgroup->group;
+	return &ugroup->group;
 
-// cleanup:
-// 	free(tgroup);
-// 	return NULL;
-// }
+cleanup:
+	free(ugroup);
+	return NULL;
+}
 
 // static struct spdk_nvmf_transport_poll_group *
 // nvmf_tcp_get_optimal_poll_group(struct spdk_nvmf_qpair *qpair)
@@ -2602,7 +2602,7 @@ const struct spdk_nvmf_transport_ops spdk_nvmf_transport_ucx = {
 
 	// .listener_discover = nvmf_tcp_discover,
 
-	// .poll_group_create = nvmf_tcp_poll_group_create,
+	.poll_group_create = nvmf_ucx_poll_group_create,
 	// .get_optimal_poll_group = nvmf_tcp_get_optimal_poll_group,
 	// .poll_group_destroy = nvmf_tcp_poll_group_destroy,
 	// .poll_group_add = nvmf_tcp_poll_group_add,
