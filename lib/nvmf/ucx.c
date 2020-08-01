@@ -51,7 +51,7 @@
 // #define NVMF_TCP_MAX_ACCEPT_SOCK_ONE_TIME 16
 // #define SPDK_NVMF_TCP_DEFAULT_MAX_SOCK_PRIORITY 6
 
-// const struct spdk_nvmf_transport_ops spdk_nvmf_transport_tcp;
+const struct spdk_nvmf_transport_ops spdk_nvmf_transport_ucx;
 
 // /* spdk nvmf related structure */
 // enum spdk_nvmf_tcp_req_state {
@@ -440,12 +440,12 @@ struct spdk_nvmf_ucx_transport {
 static int
 nvmf_ucx_destroy(struct spdk_nvmf_transport *transport)
 {
-	struct spdk_nvmf_ucx_transport	*ttransport;
+	struct spdk_nvmf_ucx_transport	*utransport;
 
 	assert(transport != NULL);
 	utransport = SPDK_CONTAINEROF(transport, struct spdk_nvmf_ucx_transport, transport);
 
-	pthread_mutex_destroy(&ttransport->lock);
+	pthread_mutex_destroy(&utransport->lock);
 	free(utransport);
 	return 0;
 }
@@ -462,7 +462,7 @@ nvmf_ucx_create(struct spdk_nvmf_transport_opts *opts)
 		return NULL;
 	}
 
-	TAILQ_INIT(&ttransport->ports);
+	TAILQ_INIT(&utransport->ports);
 
 	utransport->transport.ops = &spdk_nvmf_transport_ucx;
 
@@ -495,7 +495,7 @@ nvmf_ucx_create(struct spdk_nvmf_transport_opts *opts)
 	sge_count = opts->max_io_size / opts->io_unit_size;
 	if (sge_count > SPDK_NVMF_MAX_SGL_ENTRIES) {
 		SPDK_ERRLOG("Unsupported IO Unit size specified, %d bytes\n", opts->io_unit_size);
-		free(ttransport);
+		free(utransport);
 		return NULL;
 	}
 
