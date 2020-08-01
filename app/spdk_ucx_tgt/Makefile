@@ -31,26 +31,48 @@
 #  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 
-SPDK_ROOT_DIR := $(abspath $(CURDIR)/..)
+SPDK_ROOT_DIR := $(abspath $(CURDIR)/../..)
 include $(SPDK_ROOT_DIR)/mk/spdk.common.mk
+include $(SPDK_ROOT_DIR)/mk/spdk.modules.mk
 
-DIRS-y += trace
-DIRS-y += trace_record
-DIRS-y += nvmf_tgt
-DIRS-y += iscsi_top
-DIRS-y += iscsi_tgt
-DIRS-y += spdk_tgt
-DIRS-y += spdk_ucx_tgt
-DIRS-y += spdk_lspci
-DIRS-y += spdk_top
+APP = spdk_ucx_tgt
+
+C_SRCS := spdk_ucx_tgt.c
+
+SPDK_LIB_LIST = $(ALL_MODULES_LIST)
+
 ifeq ($(OS),Linux)
-DIRS-$(CONFIG_VHOST) += vhost
-DIRS-y += spdk_dd
+ifeq ($(CONFIG_VHOST),y)
+SPDK_LIB_LIST += vhost event_vhost
+ifeq ($(CONFIG_VHOST_INTERNAL_LIB),y)
+SPDK_LIB_LIST += rte_vhost
+endif
+endif
 endif
 
-.PHONY: all clean $(DIRS-y)
+SPDK_LIB_LIST += $(EVENT_BDEV_SUBSYSTEM) event_iscsi event_net event_scsi event_nvmf event
+SPDK_LIB_LIST += nvmf trace log conf thread util bdev iscsi scsi accel rpc jsonrpc json
+SPDK_LIB_LIST += app_rpc log_rpc bdev_rpc net sock notify
 
-all: $(DIRS-y)
-clean: $(DIRS-y)
+ifeq ($(SPDK_ROOT_DIR)/lib/env_dpdk,$(CONFIG_ENV))
+SPDK_LIB_LIST += env_dpdk_rpc
+endif
 
-include $(SPDK_ROOT_DIR)/mk/spdk.subdirs.mk
+ifeq ($(OS),Linux)
+SPDK_LIB_LIST += event_nbd nbd
+endif
+
+ifeq ($(CONFIG_FC),y)
+ifneq ($(strip $(CONFIG_FC_PATH)),)
+SYS_LIBS += -L$(CONFIG_FC_PATH)
+endif
+SYS_LIBS += -lufc
+endif
+
+include $(SPDK_ROOT_DIR)/mk/spdk.app.mk
+
+install: $(APP)
+	$(INSTALL_APP)
+
+uninstall:
+	$(UNINSTALL_APP)

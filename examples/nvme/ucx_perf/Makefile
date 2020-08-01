@@ -31,26 +31,19 @@
 #  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 
-SPDK_ROOT_DIR := $(abspath $(CURDIR)/..)
-include $(SPDK_ROOT_DIR)/mk/spdk.common.mk
+SPDK_ROOT_DIR := $(abspath $(CURDIR)/../../..)
 
-DIRS-y += trace
-DIRS-y += trace_record
-DIRS-y += nvmf_tgt
-DIRS-y += iscsi_top
-DIRS-y += iscsi_tgt
-DIRS-y += spdk_tgt
-DIRS-y += spdk_ucx_tgt
-DIRS-y += spdk_lspci
-DIRS-y += spdk_top
+APP = ucx_perf
+
+include $(SPDK_ROOT_DIR)/mk/nvme.libtest.mk
+
 ifeq ($(OS),Linux)
-DIRS-$(CONFIG_VHOST) += vhost
-DIRS-y += spdk_dd
+SYS_LIBS += -laio
+CFLAGS += -DHAVE_LIBAIO
 endif
 
-.PHONY: all clean $(DIRS-y)
+install: $(APP)
+	$(INSTALL_EXAMPLE)
 
-all: $(DIRS-y)
-clean: $(DIRS-y)
-
-include $(SPDK_ROOT_DIR)/mk/spdk.subdirs.mk
+uninstall:
+	$(UNINSTALL_EXAMPLE)
