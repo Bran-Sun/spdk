@@ -75,6 +75,7 @@ spdk_nvmf_transport_register(const struct spdk_nvmf_transport_ops *ops)
 		assert(false);
 		return;
 	}
+	SPDK_NOTICELOG("Successfully registering nvmf transport type %s.\n", ops->name);
 
 	new_ops = calloc(1, sizeof(*new_ops));
 	if (new_ops == NULL) {
