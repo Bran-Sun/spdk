@@ -40,7 +40,7 @@ SO_MINOR := 0
 C_SRCS = ctrlr.c ctrlr_discovery.c ctrlr_bdev.c \
 	 subsystem.c nvmf.c nvmf_rpc.c transport.c tcp.c
 
-C_SRCS-$(CONFIG_RDMA) += rdma.c
+C_SRCS-$(CONFIG_RDMA) += rdma.c ucx.c
 LIBNAME = nvmf
 LOCAL_SYS_LIBS = -luuid
 ifeq ($(CONFIG_RDMA),y)

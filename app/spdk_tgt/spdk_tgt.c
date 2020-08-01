@@ -109,6 +109,7 @@ main(int argc, char **argv)
 	struct spdk_app_opts opts = {};
 	int rc;
 
+	spdk_log_set_level(SPDK_LOG_DEBUG);
 	spdk_app_opts_init(&opts);
 	opts.name = "spdk_tgt";
 	if ((rc = spdk_app_parse_args(argc, argv, &opts, g_spdk_tgt_get_opts_string,
