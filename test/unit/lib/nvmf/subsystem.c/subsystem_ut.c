@@ -155,6 +155,8 @@ spdk_nvme_transport_id_parse_trtype(enum spdk_nvme_transport_type *trtype, const
 		*trtype = SPDK_NVME_TRANSPORT_PCIE;
 	} else if (strcasecmp(str, "RDMA") == 0) {
 		*trtype = SPDK_NVME_TRANSPORT_RDMA;
+	} else if (strcasecmp(str, "UCX") == 0) {
+		*trtype = SPDK_NVME_TRANSPORT_UCX;
 	} else {
 		return -ENOENT;
 	}

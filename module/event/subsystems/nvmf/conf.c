@@ -274,6 +274,7 @@ nvmf_tgt_listen_done(void *cb_arg, int status)
 	}
 }
 
+// here is the entry
 static int
 nvmf_parse_subsystem(struct spdk_conf_section *sp)
 {
@@ -450,7 +451,8 @@ nvmf_parse_subsystem(struct spdk_conf_section *sp)
 		}
 
 		if (trid.trtype == SPDK_NVME_TRANSPORT_RDMA ||
-		    trid.trtype == SPDK_NVME_TRANSPORT_TCP) {
+		    trid.trtype == SPDK_NVME_TRANSPORT_TCP ||
+			trid.trtype == SPDK_NVME_TRANSPORT_UCX ) {
 			ret = nvmf_tgt_parse_listen_ip_addr(address_dup, &trid);
 		} else if (trid.trtype == SPDK_NVME_TRANSPORT_FC) {
 			ret = nvmf_tgt_parse_listen_fc_addr(address_dup, &trid);
