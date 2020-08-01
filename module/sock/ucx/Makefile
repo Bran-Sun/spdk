@@ -31,18 +31,15 @@
 #  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 
-SPDK_ROOT_DIR := $(abspath $(CURDIR)/../..)
+SPDK_ROOT_DIR := $(abspath $(CURDIR)/../../..)
 include $(SPDK_ROOT_DIR)/mk/spdk.common.mk
 
-DIRS-y = ucx
-ifeq ($(OS), Linux)
-DIRS-$(CONFIG_URING) += uring
-endif
-DIRS-$(CONFIG_VPP) += vpp
+SO_VER := 2
+SO_MINOR := 0
 
-.PHONY: all clean $(DIRS-y)
+LIBNAME = sock_ucx
+C_SRCS = ucx.c
 
-all: $(DIRS-y)
-clean: $(DIRS-y)
+SPDK_MAP_FILE = $(SPDK_ROOT_DIR)/mk/spdk_blank.map
 
-include $(SPDK_ROOT_DIR)/mk/spdk.subdirs.mk
+include $(SPDK_ROOT_DIR)/mk/spdk.lib.mk
