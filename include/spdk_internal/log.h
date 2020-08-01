@@ -67,6 +67,16 @@ __attribute__((constructor)) static void register_flag_##flag(void) \
 	spdk_log_register_flag(str, &flag); \
 }
 
+#define SPDK_LOG_REGISTER_COMPONENT_PRINT(str, flag) \
+struct spdk_log_flag flag = { \
+	.enabled = true, \
+	.name = str, \
+}; \
+__attribute__((constructor)) static void register_flag_##flag(void) \
+{ \
+	spdk_log_register_flag(str, &flag); \
+}
+
 #define SPDK_INFOLOG(FLAG, ...)									\
 	do {											\
 		extern struct spdk_log_flag FLAG;						\

@@ -2620,4 +2620,4 @@ const struct spdk_nvmf_transport_ops spdk_nvmf_transport_ucx = {
 };
 
 SPDK_NVMF_TRANSPORT_REGISTER(ucx, &spdk_nvmf_transport_ucx);
-SPDK_LOG_REGISTER_COMPONENT("nvmf_ucx", SPDK_LOG_NVMF_UCX)
+SPDK_LOG_REGISTER_COMPONENT_PRINT("nvmf_ucx", SPDK_LOG_NVMF_UCX)
