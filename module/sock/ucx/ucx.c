@@ -47,11 +47,14 @@
 #include "spdk/likely.h"
 #include "spdk_internal/sock.h"
 
+#include <ucp/api/ucp.h>
+
 #define MAX_TMPBUF 1024
 #define PORTNUMLEN 32
 #define MIN_SO_RCVBUF_SIZE (2 * 1024 * 1024)
 #define MIN_SO_SNDBUF_SIZE (2 * 1024 * 1024)
 #define IOV_BATCH_SIZE 64
+#define MAX_CONNECTION 65535
 
 #if defined(SO_ZEROCOPY) && defined(MSG_ZEROCOPY)
 #define SPDK_ZEROCOPY
@@ -85,6 +88,45 @@ static struct spdk_sock_impl_opts g_spdk_posix_sock_impl_opts = {
 	.enable_recv_pipe = true,
 	.enable_zerocopy_send = true
 };
+
+struct ucp_global_context {
+	ucp_context_h ucp_context;
+	pthread_mutex_t fd_lock;
+}
+
+static void __attribute__((constructor)) ucp_global_context()
+{ 
+	ucp_params_t ucp_params;
+    ucs_status_t status;
+    int ret = 0;
+
+    memset(&ucp_params, 0, sizeof(ucp_params));
+
+    /* UCP initialization */
+    ucp_params.field_mask = UCP_PARAM_FIELD_FEATURES;
+    ucp_params.features = UCP_FEATURE_STREAM;
+
+    status = ucp_init(&ucp_params, NULL, &ucp_context);
+    if (status != UCS_OK) {
+        SPDK_ERRLOG("failed to ucp_init (%s)\n", ucs_status_string(status));
+    }
+
+	pthread_mutex_init(&fd_lock, NULL);
+}
+
+static struct ucp_global_context ucp_global_context;
+
+struct worker_fd_array {
+	bool if_assign;
+	ucp_worker_h worker;
+	ucp_ep_h worker_ep;
+};
+
+static void __attribute__((constructor)) worker_fd_array() {
+	if_assign = false;
+}
+
+static struct worker_fd_array worker_fd[MAX_CONNECTION];
 
 static int
 get_addr_str(struct sockaddr *sa, char *host, size_t hlen)
@@ -189,7 +231,7 @@ ucx_sock_getaddr(struct spdk_sock *_sock, char *saddr, int slen, uint16_t *sport
 	return 0;
 }
 
-enum posix_sock_create_type {
+enum ucx_sock_create_type {
 	SPDK_SOCK_CREATE_LISTEN,
 	SPDK_SOCK_CREATE_CONNECT,
 };
@@ -392,11 +434,11 @@ end:
 }
 
 static struct spdk_sock *
-posix_sock_create(const char *ip, int port,
-		  enum posix_sock_create_type type,
+ucx_sock_create(const char *ip, int port,
+		  enum ucx_sock_create_type type,
 		  struct spdk_sock_opts *opts)
 {
-	struct spdk_posix_sock *sock;
+	struct spdk_ucx_sock *sock;
 	char buf[MAX_TMPBUF];
 	char portnum[PORTNUMLEN];
 	char *p;
@@ -409,6 +451,8 @@ posix_sock_create(const char *ip, int port,
 	if (ip == NULL) {
 		return NULL;
 	}
+
+	// get ip
 	if (ip[0] == '[') {
 		snprintf(buf, sizeof(buf), "%s", ip + 1);
 		p = strchr(buf, ']');
@@ -418,18 +462,30 @@ posix_sock_create(const char *ip, int port,
 		ip = (const char *) &buf[0];
 	}
 
+	//get port
 	snprintf(portnum, sizeof portnum, "%d", port);
-	memset(&hints, 0, sizeof hints);
-	hints.ai_family = PF_UNSPEC;
-	hints.ai_socktype = SOCK_STREAM;
-	hints.ai_flags = AI_NUMERICSERV;
-	hints.ai_flags |= AI_PASSIVE;
-	hints.ai_flags |= AI_NUMERICHOST;
-	rc = getaddrinfo(ip, portnum, &hints, &res0);
-	if (rc != 0) {
-		SPDK_ERRLOG("getaddrinfo() failed (errno=%d)\n", errno);
-		return NULL;
+
+	pthread_mutex_lock(&ucp_global_context.fd_lock);
+
+	pthread_mutex_unlock(&ucp_global_context.fd_lock);
+
+	if (type == SPDK_SOCK_CREATE_LISTEN) {
+
+	} else {
+
 	}
+
+	// memset(&hints, 0, sizeof hints);
+	// hints.ai_family = PF_UNSPEC;
+	// hints.ai_socktype = SOCK_STREAM;
+	// hints.ai_flags = AI_NUMERICSERV;
+	// hints.ai_flags |= AI_PASSIVE;
+	// hints.ai_flags |= AI_NUMERICHOST;
+	// rc = getaddrinfo(ip, portnum, &hints, &res0);
+	// if (rc != 0) {
+	// 	SPDK_ERRLOG("getaddrinfo() failed (errno=%d)\n", errno);
+	// 	return NULL;
+	// }
 
 	/* try listen */
 	fd = -1;
@@ -564,9 +620,9 @@ retry:
 }
 
 static struct spdk_sock *
-posix_sock_listen(const char *ip, int port, struct spdk_sock_opts *opts)
+ucx_sock_listen(const char *ip, int port, struct spdk_sock_opts *opts)
 {
-	return posix_sock_create(ip, port, SPDK_SOCK_CREATE_LISTEN, opts);
+	return ucx_sock_create(ip, port, SPDK_SOCK_CREATE_LISTEN, opts);
 }
 
 static struct spdk_sock *
@@ -1378,7 +1434,7 @@ static struct spdk_net_impl g_ucx_net_impl = {
 	.name		= "ucx",
 	.getaddr	= ucx_sock_getaddr,
 	.connect	= ucx_sock_connect,
-	.listen		= posix_sock_listen,
+	.listen		= ucx_sock_listen,
 	.accept		= posix_sock_accept,
 	.close		= posix_sock_close,
 	.recv		= posix_sock_recv,
