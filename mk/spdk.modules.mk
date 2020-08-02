@@ -91,7 +91,8 @@ BLOCKDEV_MODULES_LIST += bdev_pmem
 SYS_LIBS += -lpmemblk -lpmem
 endif
 
-SOCK_MODULES_LIST = sock_posix
+SOCK_MODULES_LIST = sock_ucx
+SYS_LIBS +=  -I/global/home/users/rdmaworkshop07/local/include -L/global/home/users/rdmaworkshop07/local/lib -lucp -lucs -g
 
 ifeq ($(OS), Linux)
 ifeq ($(CONFIG_URING),y)

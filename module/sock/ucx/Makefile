@@ -40,7 +40,7 @@ SO_MINOR := 0
 LIBNAME = sock_ucx
 C_SRCS = ucx.c
 
-CFLAGS += -I/global/home/users/rdmaworkshop07/local/include -L/global/home/users/rdmaworkshop07/local/lib -lucp -lucs
+CFLAGS += -I/global/home/users/rdmaworkshop07/local/include -L/global/home/users/rdmaworkshop07/local/lib -lucp -lucs -g
 
 SPDK_MAP_FILE = $(SPDK_ROOT_DIR)/mk/spdk_blank.map
 
