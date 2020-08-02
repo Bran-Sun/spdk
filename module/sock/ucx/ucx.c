@@ -55,6 +55,8 @@
 #define MIN_SO_SNDBUF_SIZE (2 * 1024 * 1024)
 #define IOV_BATCH_SIZE 64
 #define MAX_CONNECTION 65535
+#define IP_STRING_LEN          50
+#define PORT_STRING_LEN        8
 
 #if defined(SO_ZEROCOPY) && defined(MSG_ZEROCOPY)
 #define SPDK_ZEROCOPY
@@ -94,11 +96,12 @@ struct ucp_global_context {
 	pthread_mutex_t fd_lock;
 };
 
-static void __attribute__((constructor)) ucp_global_context()
+static struct ucp_global_context ucp_global_context;
+
+static void __attribute__((constructor)) ucp_global_context_init(void)
 { 
-	ucp_params_t ucp_params;
+    ucp_params_t ucp_params;
     ucs_status_t status;
-    int ret = 0;
 
     memset(&ucp_params, 0, sizeof(ucp_params));
 
@@ -106,15 +109,13 @@ static void __attribute__((constructor)) ucp_global_context()
     ucp_params.field_mask = UCP_PARAM_FIELD_FEATURES;
     ucp_params.features = UCP_FEATURE_STREAM;
 
-    status = ucp_init(&ucp_params, NULL, &ucp_context);
+    status = ucp_init(&ucp_params, NULL, &ucp_global_context.ucp_context);
     if (status != UCS_OK) {
         SPDK_ERRLOG("failed to ucp_init (%s)\n", ucs_status_string(status));
     }
 
-	pthread_mutex_init(&fd_lock, NULL);
+    pthread_mutex_init(&ucp_global_context.fd_lock, NULL);
 }
-
-static struct ucp_global_context ucp_global_context;
 
 struct ucx_server_ctx {
     volatile ucp_conn_request_h conn_request;
@@ -125,15 +126,25 @@ struct worker_fd_array {
 	bool if_assign;
 	ucp_worker_h worker;
 	ucp_ep_h worker_ep;
-	ucp_server_ctx server_context;
-	ucp_listener_h listner;
+	struct ucx_server_ctx server_context;
+	ucp_listener_h listener;
 };
 
-static void __attribute__((constructor)) worker_fd_array() {
-	if_assign = false;
+static struct worker_fd_array worker_fd[MAX_CONNECTION];
+
+static void __attribute__((constructor)) worker_fd_array_init(void) {
+	for (int i = 0; i < MAX_CONNECTION; ++i) {
+		worker_fd[i].if_assign = false;
+	}
 }
 
-static struct worker_fd_array worker_fd[MAX_CONNECTION];
+/**
+ *  * Stream request context. Holds a value to indicate whether or not the
+ *   * request is completed.
+ *    */
+typedef struct test_req {
+    int complete;
+} test_req_t;
 
 static int
 get_addr_str(struct sockaddr *sa, char *host, size_t hlen)
@@ -374,7 +385,7 @@ ucx_sock_alloc(int fd, bool enable_zero_copy)
 	return sock;
 }
 
-static int alloc_fd() {
+static int alloc_fd(void) {
 	for (int i = 0; i < MAX_CONNECTION; ++i) {
 		if (worker_fd[i].if_assign == false) {
 			worker_fd[i].if_assign = true;
@@ -403,13 +414,53 @@ static int init_worker(int fd) {
     return ret;
 }
 
+static char* sockaddr_get_ip_str(const struct sockaddr_storage *sock_addr,
+                                 char *ip_str, size_t max_size)
+{
+    struct sockaddr_in  addr_in;
+    struct sockaddr_in6 addr_in6;
+
+    switch (sock_addr->ss_family) {
+    case AF_INET:
+        memcpy(&addr_in, sock_addr, sizeof(struct sockaddr_in));
+        inet_ntop(AF_INET, &addr_in.sin_addr, ip_str, max_size);
+        return ip_str;
+    case AF_INET6:
+        memcpy(&addr_in6, sock_addr, sizeof(struct sockaddr_in6));
+        inet_ntop(AF_INET6, &addr_in6.sin6_addr, ip_str, max_size);
+        return ip_str;
+    default:
+        return "Invalid address family";
+    }
+}
+
+static char* sockaddr_get_port_str(const struct sockaddr_storage *sock_addr,
+                                   char *port_str, size_t max_size)
+{
+    struct sockaddr_in  addr_in;
+    struct sockaddr_in6 addr_in6;
+
+    switch (sock_addr->ss_family) {
+    case AF_INET:
+        memcpy(&addr_in, sock_addr, sizeof(struct sockaddr_in));
+        snprintf(port_str, max_size, "%d", ntohs(addr_in.sin_port));
+        return port_str;
+    case AF_INET6:
+        memcpy(&addr_in6, sock_addr, sizeof(struct sockaddr_in6));
+        snprintf(port_str, max_size, "%d", ntohs(addr_in6.sin6_port));
+        return port_str;
+    default:
+        return "Invalid address family";
+    }
+}
+
 /**
  * The callback on the server side which is invoked upon receiving a connection
  * request from the client.
  */
 static void server_conn_handle_cb(ucp_conn_request_h conn_request, void *arg)
 {
-    ucx_server_ctx_t *context = arg;
+    struct ucx_server_ctx *context = arg;
     ucp_conn_request_attr_t attr;
     char ip_str[IP_STRING_LEN];
     char port_str[PORT_STRING_LEN];
@@ -464,14 +515,11 @@ ucx_sock_create(const char *ip, int port,
 		  enum ucx_sock_create_type type,
 		  struct spdk_sock_opts *opts)
 {
-	struct spdk_ucx_sock *sock;
+	struct spdk_posix_sock *sock;
 	char buf[MAX_TMPBUF];
 	char portnum[PORTNUMLEN];
 	char *p;
-	struct addrinfo hints, *res, *res0;
-	int fd, flag;
-	int val = 1;
-	int rc, sz;
+	int fd;
 	bool enable_zero_copy = true;
 
 	if (ip == NULL) {
@@ -491,7 +539,7 @@ ucx_sock_create(const char *ip, int port,
 	//get port
 	snprintf(portnum, sizeof portnum, "%d", port);
 
-	int fd = -1;
+	fd = -1;
 	pthread_mutex_lock(&ucp_global_context.fd_lock);
 	fd = alloc_fd();
 	pthread_mutex_unlock(&ucp_global_context.fd_lock);
@@ -510,10 +558,10 @@ ucx_sock_create(const char *ip, int port,
 	if (type == SPDK_SOCK_CREATE_LISTEN) {
 		//fill listen addr
 		struct sockaddr_in listen_addr;
-		memset(listen_addr, 0, sizeof(struct sockaddr_in));
-		listen_addr->sin_family      = AF_INET;
-		listen_addr->sin_addr.s_addr = (ip) ? inet_addr(ip) : INADDR_ANY;
-		listen_addr->sin_port        = htons(port);
+		memset(&listen_addr, 0, sizeof(struct sockaddr_in));
+		listen_addr.sin_family      = AF_INET;
+		listen_addr.sin_addr.s_addr = (ip) ? inet_addr(ip) : INADDR_ANY;
+		listen_addr.sin_port        = htons(port);
 
 		//fill listener params_t
 		ucp_listener_params_t params;
@@ -535,10 +583,10 @@ ucx_sock_create(const char *ip, int port,
 	} else {
 		//fill addr info
 		struct sockaddr_in connect_addr;
-		memset(connect_addr, 0, sizeof(struct sockaddr_in));
-		connect_addr->sin_family      = AF_INET;
-		connect_addr->sin_addr.s_addr = inet_addr(ip);
-		connect_addr->sin_port        = htons(port);
+		memset(&connect_addr, 0, sizeof(struct sockaddr_in));
+		connect_addr.sin_family      = AF_INET;
+		connect_addr.sin_addr.s_addr = inet_addr(ip);
+		connect_addr.sin_port        = htons(port);
 
 		ucp_ep_params_t ep_params;
 		ep_params.field_mask       = UCP_EP_PARAM_FIELD_FLAGS       |
@@ -552,7 +600,7 @@ ucx_sock_create(const char *ip, int port,
 		ep_params.sockaddr.addr    = (struct sockaddr*)&connect_addr;
 		ep_params.sockaddr.addrlen = sizeof(connect_addr);
 
-		ucs_status_t status = ucp_ep_create(worker_fd[fd].ucp_worker, &ep_params, &worker_fd[fd].worker_ep);
+		ucs_status_t status = ucp_ep_create(worker_fd[fd].worker, &ep_params, &worker_fd[fd].worker_ep);
 		if (status != UCS_OK) {
 			SPDK_ERRLOG("failed to connect to %s (%s)\n", ip, ucs_status_string(status));
 			memset(&worker_fd[fd], 0, sizeof(worker_fd[fd]));
@@ -582,7 +630,7 @@ ucx_sock_listen(const char *ip, int port, struct spdk_sock_opts *opts)
 }
 
 const  char test_message[100]           = "UCX Client-Server Hello World";
-static unsigned long long test_string_len           = sizeof(test_message);
+const unsigned long long test_string_len           = 100;
 
 /**
  * The callback on the sending side, which is invoked after finishing sending
@@ -595,9 +643,36 @@ static void send_cb(void *request, ucs_status_t status, void *user_data)
     ctx->complete = 1;
 }
 
+/**
+ * Progress the request until it completes.
+ */
+static ucs_status_t request_wait(ucp_worker_h ucp_worker, void *request,
+                                 test_req_t *ctx)
+{
+    ucs_status_t status;
+
+    /* if operation was completed immediately */
+    if (request == NULL) {
+        return UCS_OK;
+    }
+    
+    if (UCS_PTR_IS_ERR(request)) {
+        return UCS_PTR_STATUS(request);
+    }
+    
+    while (ctx->complete == 0) {
+        ucp_worker_progress(ucp_worker);
+    }
+    status = ucp_request_check_status(request);
+
+    ucp_request_free(request);
+
+    return status;
+}
+
 static int request_finalize(ucp_worker_h ucp_worker, test_req_t *request,
                             test_req_t *ctx, int is_server,
-                            char *recv_message, int current_iter)
+                            char *recv_message)
 {
     ucs_status_t status;
     int ret = 0;
@@ -610,7 +685,7 @@ static int request_finalize(ucp_worker_h ucp_worker, test_req_t *request,
     }
 
 	if (is_server) {
-		SPDK_LOG_INFO("receive %s", recv_message);
+		SPDK_NOTICELOG("receive %s", recv_message);
 		fflush(stdout);
 	}
 
@@ -624,7 +699,7 @@ static int request_finalize(ucp_worker_h ucp_worker, test_req_t *request,
  */
 static int send_recv_stream(ucp_worker_h ucp_worker, ucp_ep_h ep, int is_server)
 {
-    char recv_message[test_string_len]= "";
+    char recv_message[test_string_len];
     ucp_request_param_t param;
     test_req_t *request;
     size_t length;
@@ -650,13 +725,13 @@ static int send_recv_stream(ucp_worker_h ucp_worker, ucp_ep_h ep, int is_server)
     }
 
     return request_finalize(ucp_worker, request, &ctx, is_server,
-                            recv_message, current_iter);
+                            recv_message);
 }
 
 static struct spdk_sock *
 ucx_sock_connect(const char *ip, int port, struct spdk_sock_opts *opts)
 {
-	spdk_sock *_sock = ucx_sock_create(ip, port, SPDK_SOCK_CREATE_CONNECT, opts);
+	struct spdk_sock *_sock = ucx_sock_create(ip, port, SPDK_SOCK_CREATE_CONNECT, opts);
 
 	struct spdk_posix_sock *sock = __posix_sock(_sock);	
 	send_recv_stream(worker_fd[sock->fd].worker, worker_fd[sock->fd].worker_ep, false);
@@ -690,6 +765,33 @@ static ucs_status_t server_create_ep(ucp_worker_h data_worker,
     return status;
 }
 
+/**
+ *  * Close the given endpoint.
+ *   * Currently closing the endpoint with UCP_EP_CLOSE_MODE_FORCE since we currently
+ *    * cannot rely on the client side to be present during the server's endpoint
+ *     * closing process.
+ *      */
+static void ep_close(ucp_worker_h ucp_worker, ucp_ep_h ep)
+{
+    ucp_request_param_t param;
+    ucs_status_t status;
+    void *close_req;
+
+    param.op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS;
+    param.flags        = UCP_EP_CLOSE_FLAG_FORCE;
+    close_req          = ucp_ep_close_nbx(ep, &param);
+    if (UCS_PTR_IS_PTR(close_req)) {
+        do {
+            ucp_worker_progress(ucp_worker);
+            status = ucp_request_check_status(close_req);
+        } while (status == UCS_INPROGRESS);
+
+        ucp_request_free(close_req);
+    } else if (UCS_PTR_STATUS(close_req) != UCS_OK) {
+        fprintf(stderr, "failed to close ep %p\n", (void*)ep);
+    }
+}
+
 static struct spdk_sock *
 ucx_sock_accept(struct spdk_sock *_sock)
 {
@@ -711,9 +813,9 @@ ucx_sock_accept(struct spdk_sock *_sock)
 		return NULL;
 	}
 
-	pthread_mutex_lock(ucp_global_context.fd_lock);
+	pthread_mutex_lock(&ucp_global_context.fd_lock);
 	fd = alloc_fd();
-	pthread_mutex_unlock(ucp_global_context.fd_lock);
+	pthread_mutex_unlock(&ucp_global_context.fd_lock);
 
 	if (fd == -1) {
 		SPDK_ERRLOG("cannot allocate enough fd\n");
