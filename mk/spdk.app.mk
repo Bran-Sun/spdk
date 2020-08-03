@@ -46,7 +46,7 @@ ifneq (,$(findstring $(SPDK_ROOT_DIR)/examples,$(CURDIR)))
 endif
 endif
 
-LIBS += $(SPDK_LIB_LINKER_ARGS)
+LIBS += $(SPDK_LIB_LINKER_ARGS) -g
 
 CLEAN_FILES = $(APP)
 

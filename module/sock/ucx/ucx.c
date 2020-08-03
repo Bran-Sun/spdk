@@ -527,6 +527,8 @@ ucx_sock_create(const char *ip, int port,
 	}
 
 	// get ip
+	
+	printf("get ip\n");
 	if (ip[0] == '[') {
 		snprintf(buf, sizeof(buf), "%s", ip + 1);
 		p = strchr(buf, ']');
@@ -544,6 +546,8 @@ ucx_sock_create(const char *ip, int port,
 	fd = alloc_fd();
 	pthread_mutex_unlock(&ucp_global_context.fd_lock);
 
+	printf("get fd\n");
+
 	if (fd == -1) {
 		SPDK_ERRLOG("sock fd allocation failed\n");
 		return NULL;
@@ -554,6 +558,7 @@ ucx_sock_create(const char *ip, int port,
 		worker_fd[fd].if_assign = false;
 		return NULL;
 	}
+	printf("init worker\n");
 
 	if (type == SPDK_SOCK_CREATE_LISTEN) {
 		//fill listen addr
@@ -562,6 +567,7 @@ ucx_sock_create(const char *ip, int port,
 		listen_addr.sin_family      = AF_INET;
 		listen_addr.sin_addr.s_addr = (ip) ? inet_addr(ip) : INADDR_ANY;
 		listen_addr.sin_port        = htons(port);
+		printf("init listen addr\n");
 
 		//fill listener params_t
 		ucp_listener_params_t params;
@@ -580,6 +586,7 @@ ucx_sock_create(const char *ip, int port,
 			worker_fd[fd].if_assign = false;
 			return NULL;
 		}
+		printf("create listener\n");
 	} else {
 		//fill addr info
 		struct sockaddr_in connect_addr;
@@ -1197,26 +1204,13 @@ ucx_sock_close(struct spdk_sock *_sock)
 // 	return (sa.ss_family == AF_INET6);
 // }
 
-// static bool
-// posix_sock_is_ipv4(struct spdk_sock *_sock)
-// {
-// 	struct spdk_posix_sock *sock = __posix_sock(_sock);
-// 	struct sockaddr_storage sa;
-// 	socklen_t salen;
-// 	int rc;
-
-// 	assert(sock != NULL);
-
-// 	memset(&sa, 0, sizeof sa);
-// 	salen = sizeof sa;
-// 	rc = getsockname(sock->fd, (struct sockaddr *) &sa, &salen);
-// 	if (rc != 0) {
-// 		SPDK_ERRLOG("getsockname() failed (errno=%d)\n", errno);
-// 		return false;
-// 	}
-
-// 	return (sa.ss_family == AF_INET);
-// }
+static bool
+ucx_sock_is_ipv4(struct spdk_sock *_sock)
+{
+	struct spdk_posix_sock *sock = __posix_sock(_sock);
+	struct sockaddr_storage sa;
+	return true;
+}
 
 // static bool
 // posix_sock_is_connected(struct spdk_sock *_sock)
@@ -1259,33 +1253,33 @@ ucx_sock_close(struct spdk_sock *_sock)
 // 	return rc;
 // }
 
-// static struct spdk_sock_group_impl *
-// posix_sock_group_impl_create(void)
-// {
-// 	struct spdk_posix_sock_group_impl *group_impl;
-// 	int fd;
+static struct spdk_sock_group_impl *
+ucx_sock_group_impl_create(void)
+{
+	struct spdk_posix_sock_group_impl *group_impl;
+	int fd;
 
-// #if defined(__linux__)
-// 	fd = epoll_create1(0);
-// #elif defined(__FreeBSD__)
-// 	fd = kqueue();
-// #endif
-// 	if (fd == -1) {
-// 		return NULL;
-// 	}
+#if defined(__linux__)
+	fd = epoll_create1(0);
+#elif defined(__FreeBSD__)
+	fd = kqueue();
+#endif
+	if (fd == -1) {
+		return NULL;
+	}
 
-// 	group_impl = calloc(1, sizeof(*group_impl));
-// 	if (group_impl == NULL) {
-// 		SPDK_ERRLOG("group_impl allocation failed\n");
-// 		close(fd);
-// 		return NULL;
-// 	}
+	group_impl = calloc(1, sizeof(*group_impl));
+	if (group_impl == NULL) {
+		SPDK_ERRLOG("group_impl allocation failed\n");
+		close(fd);
+		return NULL;
+	}
 
-// 	group_impl->fd = fd;
-// 	TAILQ_INIT(&group_impl->pending_recv);
+	group_impl->fd = fd;
+	TAILQ_INIT(&group_impl->pending_recv);
 
-// 	return &group_impl->base;
-// }
+	return &group_impl->base;
+}
 
 // static int
 // posix_sock_group_impl_add_sock(struct spdk_sock_group_impl *_group, struct spdk_sock *_sock)
@@ -1550,10 +1544,10 @@ static struct spdk_net_impl g_ucx_net_impl = {
 	// .set_recvbuf	= posix_sock_set_recvbuf,
 	// .set_sendbuf	= posix_sock_set_sendbuf,
 	// .is_ipv6	= posix_sock_is_ipv6,
-	// .is_ipv4	= posix_sock_is_ipv4,
+	.is_ipv4	= ucx_sock_is_ipv4,
 	// .is_connected	= posix_sock_is_connected,
 	// .get_placement_id	= posix_sock_get_placement_id,
-	// .group_impl_create	= posix_sock_group_impl_create,
+	.group_impl_create	= ucx_sock_group_impl_create,
 	// .group_impl_add_sock	= posix_sock_group_impl_add_sock,
 	// .group_impl_remove_sock = posix_sock_group_impl_remove_sock,
 	// .group_impl_poll	= posix_sock_group_impl_poll,
