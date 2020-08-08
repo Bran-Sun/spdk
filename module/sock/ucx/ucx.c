@@ -120,6 +120,7 @@ static void __attribute__((constructor)) ucp_global_context_init(void)
 struct ucx_server_ctx {
     volatile ucp_conn_request_h conn_request;
     ucp_listener_h              listener;
+	int fd;
 };
 
 struct worker_fd_array {
@@ -128,6 +129,8 @@ struct worker_fd_array {
 	ucp_ep_h worker_ep;
 	struct ucx_server_ctx server_context;
 	ucp_listener_h listener;
+	char saddr[IP_STRING_LEN], daddr[IP_STRING_LEN];
+	uint16_t sport, dport;
 };
 
 static struct worker_fd_array worker_fd[MAX_CONNECTION];
@@ -178,76 +181,19 @@ get_addr_str(struct sockaddr *sa, char *host, size_t hlen)
 #define __posix_sock(sock) (struct spdk_posix_sock *)sock
 #define __posix_group_impl(group) (struct spdk_posix_sock_group_impl *)group
 
-// static int
-// ucx_sock_getaddr(struct spdk_sock *_sock, char *saddr, int slen, uint16_t *sport,
-// 		   char *caddr, int clen, uint16_t *cport)
-// {
-// 	struct spdk_posix_sock *sock = __posix_sock(_sock);
-// 	struct sockaddr_storage sa;
-// 	socklen_t salen;
-// 	int rc;
-
-// 	assert(sock != NULL);
-
-// 	memset(&sa, 0, sizeof sa);
-// 	salen = sizeof sa;
-// 	rc = getsockname(sock->fd, (struct sockaddr *) &sa, &salen);
-// 	if (rc != 0) {
-// 		SPDK_ERRLOG("getsockname() failed (errno=%d)\n", errno);
-// 		return -1;
-// 	}
-
-// 	switch (sa.ss_family) {
-// 	case AF_UNIX:
-// 		/* Acceptable connection types that don't have IPs */
-// 		return 0;
-// 	case AF_INET:
-// 	case AF_INET6:
-// 		/* Code below will get IP addresses */
-// 		break;
-// 	default:
-// 		/* Unsupported socket family */
-// 		return -1;
-// 	}
-
-// 	rc = get_addr_str((struct sockaddr *)&sa, saddr, slen);
-// 	if (rc != 0) {
-// 		SPDK_ERRLOG("getnameinfo() failed (errno=%d)\n", errno);
-// 		return -1;
-// 	}
-
-// 	if (sport) {
-// 		if (sa.ss_family == AF_INET) {
-// 			*sport = ntohs(((struct sockaddr_in *) &sa)->sin_port);
-// 		} else if (sa.ss_family == AF_INET6) {
-// 			*sport = ntohs(((struct sockaddr_in6 *) &sa)->sin6_port);
-// 		}
-// 	}
-
-// 	memset(&sa, 0, sizeof sa);
-// 	salen = sizeof sa;
-// 	rc = getpeername(sock->fd, (struct sockaddr *) &sa, &salen);
-// 	if (rc != 0) {
-// 		SPDK_ERRLOG("getpeername() failed (errno=%d)\n", errno);
-// 		return -1;
-// 	}
-
-// 	rc = get_addr_str((struct sockaddr *)&sa, caddr, clen);
-// 	if (rc != 0) {
-// 		SPDK_ERRLOG("getnameinfo() failed (errno=%d)\n", errno);
-// 		return -1;
-// 	}
-
-// 	if (cport) {
-// 		if (sa.ss_family == AF_INET) {
-// 			*cport = ntohs(((struct sockaddr_in *) &sa)->sin_port);
-// 		} else if (sa.ss_family == AF_INET6) {
-// 			*cport = ntohs(((struct sockaddr_in6 *) &sa)->sin6_port);
-// 		}
-// 	}
-
-// 	return 0;
-// }
+static int
+ucx_sock_getaddr(struct spdk_sock *_sock, char *saddr, int slen, uint16_t *sport,
+		   char *caddr, int clen, uint16_t *cport)
+{
+	struct spdk_posix_sock *sock = __posix_sock(_sock);
+	saddr = worker_fd[sock->fd].saddr;
+	slen = strlen(saddr);
+	*sport = worker_fd[sock->fd].sport;
+	caddr = worker_fd[sock->fd].daddr;
+	clen = strlen(caddr);
+	*cport = worker_fd[sock->fd].dport;
+	return 0;
+}
 
 enum ucx_sock_create_type {
 	SPDK_SOCK_CREATE_LISTEN,
@@ -434,7 +380,7 @@ static char* sockaddr_get_ip_str(const struct sockaddr_storage *sock_addr,
     }
 }
 
-static char* sockaddr_get_port_str(const struct sockaddr_storage *sock_addr,
+static uint16_t sockaddr_get_port_str(const struct sockaddr_storage *sock_addr,
                                    char *port_str, size_t max_size)
 {
     struct sockaddr_in  addr_in;
@@ -443,14 +389,12 @@ static char* sockaddr_get_port_str(const struct sockaddr_storage *sock_addr,
     switch (sock_addr->ss_family) {
     case AF_INET:
         memcpy(&addr_in, sock_addr, sizeof(struct sockaddr_in));
-        snprintf(port_str, max_size, "%d", ntohs(addr_in.sin_port));
-        return port_str;
+        return ntohs(addr_in.sin_port);
     case AF_INET6:
         memcpy(&addr_in6, sock_addr, sizeof(struct sockaddr_in6));
-        snprintf(port_str, max_size, "%d", ntohs(addr_in6.sin6_port));
-        return port_str;
+        return ntohs(addr_in6.sin6_port);
     default:
-        return "Invalid address family";
+        return 0;
     }
 }
 
@@ -468,10 +412,13 @@ static void server_conn_handle_cb(ucp_conn_request_h conn_request, void *arg)
 
     attr.field_mask = UCP_CONN_REQUEST_ATTR_FIELD_CLIENT_ADDR;
     status = ucp_conn_request_query(conn_request, &attr);
+	char *dst_addr;
+	uint16_t port;
     if (status == UCS_OK) {
-        printf("Server received a connection request from client at address %s:%s\n",
-               sockaddr_get_ip_str(&attr.client_address, ip_str, sizeof(ip_str)),
-               sockaddr_get_port_str(&attr.client_address, port_str, sizeof(port_str)));
+		dst_addr = sockaddr_get_ip_str(&attr.client_address, ip_str, sizeof(ip_str));
+		port = sockaddr_get_port_str(&attr.client_address, port_str, sizeof(port_str));
+        printf("Server received a connection request from client at address %s:%d\n",
+               dst_addr, port);
     } else if (status != UCS_ERR_UNSUPPORTED) {
         fprintf(stderr, "failed to query the connection request (%s)\n",
                 ucs_status_string(status));
@@ -479,6 +426,9 @@ static void server_conn_handle_cb(ucp_conn_request_h conn_request, void *arg)
 
     if (context->conn_request == NULL) {
         context->conn_request = conn_request;
+		memcpy(worker_fd[context->fd].daddr, dst_addr, strlen(dst_addr));
+		worker_fd[context->fd].daddr[strlen(dst_addr)] = '\0';
+		worker_fd[context->fd]. dport = port; 
     } else {
         /* The server is already handling a connection request from a client,
          * reject this new one */
@@ -568,6 +518,9 @@ ucx_sock_create(const char *ip, int port,
 		listen_addr.sin_addr.s_addr = (ip) ? inet_addr(ip) : INADDR_ANY;
 		listen_addr.sin_port        = htons(port);
 		printf("init listen addr\n");
+		memcpy(worker_fd[fd].saddr, ip, strlen(ip));
+		worker_fd[fd].saddr[strlen(ip)] = '\0';
+		worker_fd[fd].sport = port;
 
 		//fill listener params_t
 		ucp_listener_params_t params;
@@ -579,6 +532,7 @@ ucx_sock_create(const char *ip, int port,
 		params.conn_handler.arg   = &worker_fd[fd].server_context;
 
 		worker_fd[fd].server_context.conn_request = NULL;
+		worker_fd[fd].server_context.fd = fd;
 		ucs_status_t status = ucp_listener_create(worker_fd[fd].worker, &params, &worker_fd[fd].listener);
 		if (status != UCS_OK) {
 			SPDK_ERRLOG("failed to listen (%s)\n", ucs_status_string(status));
@@ -594,6 +548,9 @@ ucx_sock_create(const char *ip, int port,
 		connect_addr.sin_family      = AF_INET;
 		connect_addr.sin_addr.s_addr = inet_addr(ip);
 		connect_addr.sin_port        = htons(port);
+		memcpy(worker_fd[fd].saddr, ip, strlen(ip));
+		worker_fd[fd].saddr[strlen(ip)] = '\0';
+		worker_fd[fd].sport = port;
 
 		ucp_ep_params_t ep_params;
 		ep_params.field_mask       = UCP_EP_PARAM_FIELD_FLAGS       |
@@ -836,6 +793,8 @@ ucx_sock_accept(struct spdk_sock *_sock)
 		worker_fd[fd].if_assign = false;		
 		return NULL;
 	}
+	memcpy(worker_fd[fd].saddr, worker_fd[sock->fd], strlen(worker_fd[sock->fd]));
+	worker_fd[fd].sport = worker_fd[sock->fd].sport;
 
 	/* Inherit the zero copy feature from the listen socket */
 	new_sock = ucx_sock_alloc(fd, sock->zcopy);
@@ -1530,7 +1489,7 @@ ucx_sock_group_impl_create(void)
 
 static struct spdk_net_impl g_ucx_net_impl = {
 	.name		= "ucx",
-	//.getaddr	= ucx_sock_getaddr,
+	.getaddr	= ucx_sock_getaddr,
 	.connect	= ucx_sock_connect,
 	.listen		= ucx_sock_listen,
 	.accept		= ucx_sock_accept,
