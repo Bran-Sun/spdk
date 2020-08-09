@@ -268,7 +268,7 @@ posix_sock_alloc_pipe(struct spdk_posix_sock *sock, int sz)
 }
 
 static int
-posix_sock_set_recvbuf(struct spdk_sock *_sock, int sz)
+ucx_sock_set_recvbuf(struct spdk_sock *_sock, int sz)
 {
 	struct spdk_posix_sock *sock = __posix_sock(_sock);
 	int rc;
@@ -287,16 +287,16 @@ posix_sock_set_recvbuf(struct spdk_sock *_sock, int sz)
 		sz = MIN_SO_RCVBUF_SIZE;
 	}
 
-	rc = setsockopt(sock->fd, SOL_SOCKET, SO_RCVBUF, &sz, sizeof(sz));
-	if (rc < 0) {
-		return rc;
-	}
+	// rc = setsockopt(sock->fd, SOL_SOCKET, SO_RCVBUF, &sz, sizeof(sz));
+	// if (rc < 0) {
+	// 	return rc;
+	// }
 
 	return 0;
 }
 
 static int
-posix_sock_set_sendbuf(struct spdk_sock *_sock, int sz)
+ucx_sock_set_sendbuf(struct spdk_sock *_sock, int sz)
 {
 	struct spdk_posix_sock *sock = __posix_sock(_sock);
 	int rc;
@@ -307,10 +307,10 @@ posix_sock_set_sendbuf(struct spdk_sock *_sock, int sz)
 		sz = MIN_SO_SNDBUF_SIZE;
 	}
 
-	rc = setsockopt(sock->fd, SOL_SOCKET, SO_SNDBUF, &sz, sizeof(sz));
-	if (rc < 0) {
-		return rc;
-	}
+	// rc = setsockopt(sock->fd, SOL_SOCKET, SO_SNDBUF, &sz, sizeof(sz));
+	// if (rc < 0) {
+	// 	return rc;
+	// }
 
 	return 0;
 }
@@ -832,336 +832,306 @@ ucx_sock_close(struct spdk_sock *_sock)
 	return 0;
 }
 
-// static int
-// _sock_flush(struct spdk_sock *sock)
-// {
-// 	struct spdk_posix_sock *psock = __posix_sock(sock);
-// 	struct msghdr msg = {};
-// 	int flags;
-// 	struct iovec iovs[IOV_BATCH_SIZE];
-// 	int iovcnt;
-// 	int retval;
-// 	struct spdk_sock_request *req;
-// 	int i;
-// 	ssize_t rc;
-// 	unsigned int offset;
-// 	size_t len;
+static int
+_sock_flush(struct spdk_sock *sock)
+{
+	struct spdk_posix_sock *psock = __posix_sock(sock);
+	struct msghdr msg = {};
+	int flags;
+	struct iovec iovs[IOV_BATCH_SIZE];
+	int iovcnt;
+	int retval;
+	struct spdk_sock_request *req;
+	int i;
+	ssize_t rc;
+	unsigned int offset;
+	size_t len;
 
-// 	/* Can't flush from within a callback or we end up with recursive calls */
-// 	if (sock->cb_cnt > 0) {
-// 		return 0;
-// 	}
+	/* Can't flush from within a callback or we end up with recursive calls */
+	if (sock->cb_cnt > 0) {
+		return 0;
+	}
 
-// 	/* Gather an iov */
-// 	iovcnt = 0;
-// 	req = TAILQ_FIRST(&sock->queued_reqs);
-// 	while (req) {
-// 		offset = req->internal.offset;
+	/* Gather an iov */
+	iovcnt = 0;
+	req = TAILQ_FIRST(&sock->queued_reqs);
+	while (req) {
+		offset = req->internal.offset;
 
-// 		for (i = 0; i < req->iovcnt; i++) {
-// 			/* Consume any offset first */
-// 			if (offset >= SPDK_SOCK_REQUEST_IOV(req, i)->iov_len) {
-// 				offset -= SPDK_SOCK_REQUEST_IOV(req, i)->iov_len;
-// 				continue;
-// 			}
+		for (i = 0; i < req->iovcnt; i++) {
+			/* Consume any offset first */
+			if (offset >= SPDK_SOCK_REQUEST_IOV(req, i)->iov_len) {
+				offset -= SPDK_SOCK_REQUEST_IOV(req, i)->iov_len;
+				continue;
+			}
 
-// 			iovs[iovcnt].iov_base = SPDK_SOCK_REQUEST_IOV(req, i)->iov_base + offset;
-// 			iovs[iovcnt].iov_len = SPDK_SOCK_REQUEST_IOV(req, i)->iov_len - offset;
-// 			iovcnt++;
+			iovs[iovcnt].iov_base = SPDK_SOCK_REQUEST_IOV(req, i)->iov_base + offset;
+			iovs[iovcnt].iov_len = SPDK_SOCK_REQUEST_IOV(req, i)->iov_len - offset;
+			iovcnt++;
 
-// 			offset = 0;
+			offset = 0;
 
-// 			if (iovcnt >= IOV_BATCH_SIZE) {
-// 				break;
-// 			}
-// 		}
+			if (iovcnt >= IOV_BATCH_SIZE) {
+				break;
+			}
+		}
 
-// 		if (iovcnt >= IOV_BATCH_SIZE) {
-// 			break;
-// 		}
+		if (iovcnt >= IOV_BATCH_SIZE) {
+			break;
+		}
 
-// 		req = TAILQ_NEXT(req, internal.link);
-// 	}
+		req = TAILQ_NEXT(req, internal.link);
+	}
 
-// 	if (iovcnt == 0) {
-// 		return 0;
-// 	}
+	if (iovcnt == 0) {
+		return 0;
+	}
 
-// 	/* Perform the vectored write */
-// 	msg.msg_iov = iovs;
-// 	msg.msg_iovlen = iovcnt;
-// #ifdef SPDK_ZEROCOPY
-// 	if (psock->zcopy) {
-// 		flags = MSG_ZEROCOPY;
-// 	} else
-// #endif
-// 	{
-// 		flags = 0;
-// 	}
-// 	rc = sendmsg(psock->fd, &msg, flags);
-// 	if (rc <= 0) {
-// 		if (errno == EAGAIN || errno == EWOULDBLOCK) {
-// 			return 0;
-// 		}
-// 		return rc;
-// 	}
+	/* Perform the vectored write */
+	msg.msg_iov = iovs;
+	msg.msg_iovlen = iovcnt;
+#ifdef SPDK_ZEROCOPY
+	if (psock->zcopy) {
+		flags = MSG_ZEROCOPY;
+	} else
+#endif
+	{
+		flags = 0;
+	}
+	rc = ucx_sendmsg(psock->fd, &msg, flags);
+	if (rc <= 0) {
+		if (errno == EAGAIN || errno == EWOULDBLOCK) {
+			return 0;
+		}
+		return rc;
+	}
 
-// 	psock->sendmsg_idx++;
+	psock->sendmsg_idx++;
 
-// 	/* Consume the requests that were actually written */
-// 	req = TAILQ_FIRST(&sock->queued_reqs);
-// 	while (req) {
-// 		offset = req->internal.offset;
+	/* Consume the requests that were actually written */
+	req = TAILQ_FIRST(&sock->queued_reqs);
+	while (req) {
+		offset = req->internal.offset;
 
-// 		for (i = 0; i < req->iovcnt; i++) {
-// 			/* Advance by the offset first */
-// 			if (offset >= SPDK_SOCK_REQUEST_IOV(req, i)->iov_len) {
-// 				offset -= SPDK_SOCK_REQUEST_IOV(req, i)->iov_len;
-// 				continue;
-// 			}
+		for (i = 0; i < req->iovcnt; i++) {
+			/* Advance by the offset first */
+			if (offset >= SPDK_SOCK_REQUEST_IOV(req, i)->iov_len) {
+				offset -= SPDK_SOCK_REQUEST_IOV(req, i)->iov_len;
+				continue;
+			}
 
-// 			/* Calculate the remaining length of this element */
-// 			len = SPDK_SOCK_REQUEST_IOV(req, i)->iov_len - offset;
+			/* Calculate the remaining length of this element */
+			len = SPDK_SOCK_REQUEST_IOV(req, i)->iov_len - offset;
 
-// 			if (len > (size_t)rc) {
-// 				/* This element was partially sent. */
-// 				req->internal.offset += rc;
-// 				return 0;
-// 			}
+			if (len > (size_t)rc) {
+				/* This element was partially sent. */
+				req->internal.offset += rc;
+				return 0;
+			}
 
-// 			offset = 0;
-// 			req->internal.offset += len;
-// 			rc -= len;
-// 		}
+			offset = 0;
+			req->internal.offset += len;
+			rc -= len;
+		}
 
-// 		/* Handled a full request. */
-// 		spdk_sock_request_pend(sock, req);
+		/* Handled a full request. */
+		spdk_sock_request_pend(sock, req);
 
-// 		if (!psock->zcopy) {
-// 			/* The sendmsg syscall above isn't currently asynchronous,
-// 			* so it's already done. */
-// 			retval = spdk_sock_request_put(sock, req, 0);
-// 			if (retval) {
-// 				break;
-// 			}
-// 		} else {
-// 			/* Re-use the offset field to hold the sendmsg call index. The
-// 			 * index is 0 based, so subtract one here because we've already
-// 			 * incremented above. */
-// 			req->internal.offset = psock->sendmsg_idx - 1;
-// 		}
+		if (!psock->zcopy) {
+			/* The sendmsg syscall above isn't currently asynchronous,
+			* so it's already done. */
+			retval = spdk_sock_request_put(sock, req, 0);
+			if (retval) {
+				break;
+			}
+		} else {
+			/* Re-use the offset field to hold the sendmsg call index. The
+			 * index is 0 based, so subtract one here because we've already
+			 * incremented above. */
+			req->internal.offset = psock->sendmsg_idx - 1;
+		}
 
-// 		if (rc == 0) {
-// 			break;
-// 		}
+		if (rc == 0) {
+			break;
+		}
 
-// 		req = TAILQ_FIRST(&sock->queued_reqs);
-// 	}
+		req = TAILQ_FIRST(&sock->queued_reqs);
+	}
 
-// 	return 0;
-// }
+	return 0;
+}
 
-// static int
-// posix_sock_flush(struct spdk_sock *_sock)
-// {
-// 	return _sock_flush(_sock);
-// }
+static int
+ucx_sock_flush(struct spdk_sock *_sock)
+{
+	return _sock_flush(_sock);
+}
 
-// static ssize_t
-// posix_sock_recv_from_pipe(struct spdk_posix_sock *sock, struct iovec *diov, int diovcnt)
-// {
-// 	struct iovec siov[2];
-// 	int sbytes;
-// 	ssize_t bytes;
-// 	struct spdk_posix_sock_group_impl *group;
+static ssize_t
+ucx_sock_recv_from_pipe(struct spdk_posix_sock *sock, struct iovec *diov, int diovcnt)
+{
+	struct iovec siov[2];
+	int sbytes;
+	ssize_t bytes;
+	struct spdk_posix_sock_group_impl *group;
 
-// 	sbytes = spdk_pipe_reader_get_buffer(sock->recv_pipe, sock->recv_buf_sz, siov);
-// 	if (sbytes < 0) {
-// 		errno = EINVAL;
-// 		return -1;
-// 	} else if (sbytes == 0) {
-// 		errno = EAGAIN;
-// 		return -1;
-// 	}
+	sbytes = spdk_pipe_reader_get_buffer(sock->recv_pipe, sock->recv_buf_sz, siov);
+	if (sbytes < 0) {
+		errno = EINVAL;
+		return -1;
+	} else if (sbytes == 0) {
+		errno = EAGAIN;
+		return -1;
+	}
 
-// 	bytes = spdk_iovcpy(siov, 2, diov, diovcnt);
+	bytes = spdk_iovcpy(siov, 2, diov, diovcnt);
 
-// 	if (bytes == 0) {
-// 		/* The only way this happens is if diov is 0 length */
-// 		errno = EINVAL;
-// 		return -1;
-// 	}
+	if (bytes == 0) {
+		/* The only way this happens is if diov is 0 length */
+		errno = EINVAL;
+		return -1;
+	}
 
-// 	spdk_pipe_reader_advance(sock->recv_pipe, bytes);
+	spdk_pipe_reader_advance(sock->recv_pipe, bytes);
 
-// 	/* If we drained the pipe, take it off the level-triggered list */
-// 	if (sock->base.group_impl && spdk_pipe_reader_bytes_available(sock->recv_pipe) == 0) {
-// 		group = __posix_group_impl(sock->base.group_impl);
-// 		TAILQ_REMOVE(&group->pending_recv, sock, link);
-// 		sock->pending_recv = false;
-// 	}
+	/* If we drained the pipe, take it off the level-triggered list */
+	if (sock->base.group_impl && spdk_pipe_reader_bytes_available(sock->recv_pipe) == 0) {
+		group = __posix_group_impl(sock->base.group_impl);
+		TAILQ_REMOVE(&group->pending_recv, sock, link);
+		sock->pending_recv = false;
+	}
 
-// 	return bytes;
-// }
+	return bytes;
+}
 
-// static inline ssize_t
-// posix_sock_read(struct spdk_posix_sock *sock)
-// {
-// 	struct iovec iov[2];
-// 	int bytes;
-// 	struct spdk_posix_sock_group_impl *group;
+static inline ssize_t
+ucx_sock_read(struct spdk_posix_sock *sock)
+{
+	struct iovec iov[2];
+	int bytes;
+	struct spdk_posix_sock_group_impl *group;
 
-// 	bytes = spdk_pipe_writer_get_buffer(sock->recv_pipe, sock->recv_buf_sz, iov);
+	bytes = spdk_pipe_writer_get_buffer(sock->recv_pipe, sock->recv_buf_sz, iov);
 
-// 	if (bytes > 0) {
-// 		bytes = readv(sock->fd, iov, 2);
-// 		if (bytes > 0) {
-// 			spdk_pipe_writer_advance(sock->recv_pipe, bytes);
-// 			if (sock->base.group_impl) {
-// 				group = __posix_group_impl(sock->base.group_impl);
-// 				TAILQ_INSERT_TAIL(&group->pending_recv, sock, link);
-// 				sock->pending_recv = true;
-// 			}
-// 		}
-// 	}
+	if (bytes > 0) {
+		bytes = ucx_readv(sock->fd, iov, 2);
+		if (bytes > 0) {
+			spdk_pipe_writer_advance(sock->recv_pipe, bytes);
+			if (sock->base.group_impl) {
+				group = __posix_group_impl(sock->base.group_impl);
+				TAILQ_INSERT_TAIL(&group->pending_recv, sock, link);
+				sock->pending_recv = true;
+			}
+		}
+	}
 
-// 	return bytes;
-// }
+	return bytes;
+}
 
-// static ssize_t
-// ucx_sock_readv(struct spdk_sock *_sock, struct iovec *iov, int iovcnt)
-// {
-// 	struct spdk_posix_sock *sock = __posix_sock(_sock);
-// 	int rc, i;
-// 	size_t len;
+static ssize_t
+ucx_sock_readv(struct spdk_sock *_sock, struct iovec *iov, int iovcnt)
+{
+	struct spdk_posix_sock *sock = __posix_sock(_sock);
+	int rc, i;
+	size_t len;
 
-// 	if (sock->recv_pipe == NULL) {
-// 		for (int i = 0; i < iovcnt; ++i) {
-// 			test_req_t *request;
-// 			ucp_request_param_t param;
-// 			test_req_t ctx;
-// 			ctx.complete = 0;
-// 			param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
-// 								UCP_OP_ATTR_FIELD_USER_DATA;
+	if (sock->recv_pipe == NULL) {
+		return ucx_readv(sock->fd, iov, iovcnt);
+	}
 
-// 			param.op_attr_mask  |= UCP_OP_ATTR_FIELD_FLAGS;
-// 			param.flags          = UCP_STREAM_RECV_FLAG_WAITALL;
-// 			param.cb.recv_stream = stream_recv_cb;
-// 			request              = ucp_stream_recv_nbx(ep, &recv_message,
-// 													test_string_len,
-// 													&length, &param);
-// 		}
-// 		return readv(sock->fd, iov, iovcnt);
-// 	}
+	len = 0;
+	for (i = 0; i < iovcnt; i++) {
+		len += iov[i].iov_len;
+	}
 
-// 	len = 0;
-// 	for (i = 0; i < iovcnt; i++) {
-// 		len += iov[i].iov_len;
-// 	}
+	if (spdk_pipe_reader_bytes_available(sock->recv_pipe) == 0) {
+		/* If the user is receiving a sufficiently large amount of data,
+		 * receive directly to their buffers. */
+		if (len >= MIN_SOCK_PIPE_SIZE) {
+			return ucx_readv(sock->fd, iov, iovcnt);
+		}
 
-// 	if (spdk_pipe_reader_bytes_available(sock->recv_pipe) == 0) {
-// 		/* If the user is receiving a sufficiently large amount of data,
-// 		 * receive directly to their buffers. */
-// 		if (len >= MIN_SOCK_PIPE_SIZE) {
-// 			return readv(sock->fd, iov, iovcnt);
-// 		}
+		/* Otherwise, do a big read into our pipe */
+		rc = ucx_sock_read(sock);
+		if (rc <= 0) {
+			return rc;
+		}
+	}
 
-// 		/* Otherwise, do a big read into our pipe */
-// 		rc = posix_sock_read(sock);
-// 		if (rc <= 0) {
-// 			return rc;
-// 		}
-// 	}
+	return ucx_sock_recv_from_pipe(sock, iov, iovcnt);
+}
 
-// 	return posix_sock_recv_from_pipe(sock, iov, iovcnt);
-// }
+static ssize_t
+ucx_sock_recv(struct spdk_sock *sock, void *buf, size_t len)
+{
+	struct iovec iov[1];
+
+	iov[0].iov_base = buf;
+	iov[0].iov_len = len;
+
+	return ucx_sock_readv(sock, iov, 1);
+}
 
 // static ssize_t
-// ucx_sock_recv(struct spdk_sock *sock, void *buf, size_t len)
-// {
-// 	struct iovec iov[1];
+ucx_sock_writev(struct spdk_sock *_sock, struct iovec *iov, int iovcnt)
+{
+	struct spdk_posix_sock *sock = __posix_sock(_sock);
+	int rc;
 
-// 	iov[0].iov_base = buf;
-// 	iov[0].iov_len = len;
+	/* In order to process a writev, we need to flush any asynchronous writes
+	 * first. */
+	rc = _sock_flush(_sock);
+	if (rc < 0) {
+		return rc;
+	}
 
-// 	return ucx_sock_readv(sock, iov, 1);
-// }
+	if (!TAILQ_EMPTY(&_sock->queued_reqs)) {
+		/* We weren't able to flush all requests */
+		errno = EAGAIN;
+		return -1;
+	}
 
-// static ssize_t
-// ucx_sock_writev(struct spdk_sock *_sock, struct iovec *iov, int iovcnt)
-// {
-// 	struct spdk_posix_sock *sock = __posix_sock(_sock);
-// 	int rc;
+	return ucx_writev(sock->fd, iov, iovcnt);
+}
 
-// 	/* In order to process a writev, we need to flush any asynchronous writes
-// 	 * first. */
-// 	rc = _sock_flush(_sock);
-// 	if (rc < 0) {
-// 		return rc;
-// 	}
+static void
+ucx_sock_writev_async(struct spdk_sock *sock, struct spdk_sock_request *req)
+{
+	int rc;
 
-// 	if (!TAILQ_EMPTY(&_sock->queued_reqs)) {
-// 		/* We weren't able to flush all requests */
-// 		errno = EAGAIN;
-// 		return -1;
-// 	}
+	spdk_sock_request_queue(sock, req);
 
-// 	return writev(sock->fd, iov, iovcnt);
-// }
+	/* If there are a sufficient number queued, just flush them out immediately. */
+	if (sock->queued_iovcnt >= IOV_BATCH_SIZE) {
+		rc = _sock_flush(sock);
+		if (rc) {
+			spdk_sock_abort_requests(sock);
+		}
+	}
+}
 
-// static void
-// posix_sock_writev_async(struct spdk_sock *sock, struct spdk_sock_request *req)
-// {
-// 	int rc;
+static int
+ucx_sock_set_recvlowat(struct spdk_sock *_sock, int nbytes)
+{
+	// struct spdk_posix_sock *sock = __posix_sock(_sock);
+	// int val;
+	// int rc;
 
-// 	spdk_sock_request_queue(sock, req);
+	// assert(sock != NULL);
 
-// 	/* If there are a sufficient number queued, just flush them out immediately. */
-// 	if (sock->queued_iovcnt >= IOV_BATCH_SIZE) {
-// 		rc = _sock_flush(sock);
-// 		if (rc) {
-// 			spdk_sock_abort_requests(sock);
-// 		}
-// 	}
-// }
+	// val = nbytes;
+	// rc = setsockopt(sock->fd, SOL_SOCKET, SO_RCVLOWAT, &val, sizeof val);
+	// if (rc != 0) {
+	// 	return -1;
+	// }
+	return 0;
+}
 
-// static int
-// posix_sock_set_recvlowat(struct spdk_sock *_sock, int nbytes)
-// {
-// 	struct spdk_posix_sock *sock = __posix_sock(_sock);
-// 	int val;
-// 	int rc;
-
-// 	assert(sock != NULL);
-
-// 	val = nbytes;
-// 	rc = setsockopt(sock->fd, SOL_SOCKET, SO_RCVLOWAT, &val, sizeof val);
-// 	if (rc != 0) {
-// 		return -1;
-// 	}
-// 	return 0;
-// }
-
-// static bool
-// posix_sock_is_ipv6(struct spdk_sock *_sock)
-// {
-// 	struct spdk_posix_sock *sock = __posix_sock(_sock);
-// 	struct sockaddr_storage sa;
-// 	socklen_t salen;
-// 	int rc;
-
-// 	assert(sock != NULL);
-
-// 	memset(&sa, 0, sizeof sa);
-// 	salen = sizeof sa;
-// 	rc = getsockname(sock->fd, (struct sockaddr *) &sa, &salen);
-// 	if (rc != 0) {
-// 		SPDK_ERRLOG("getsockname() failed (errno=%d)\n", errno);
-// 		return false;
-// 	}
-
-// 	return (sa.ss_family == AF_INET6);
-// }
+static bool
+ucx_sock_is_ipv6(struct spdk_sock *_sock)
+{
+	return false;
+}
 
 static bool
 ucx_sock_is_ipv4(struct spdk_sock *_sock)
@@ -1171,46 +1141,46 @@ ucx_sock_is_ipv4(struct spdk_sock *_sock)
 	return true;
 }
 
-// static bool
-// posix_sock_is_connected(struct spdk_sock *_sock)
-// {
-// 	struct spdk_posix_sock *sock = __posix_sock(_sock);
-// 	uint8_t byte;
-// 	int rc;
+static bool
+ucx_sock_is_connected(struct spdk_sock *_sock)
+{
+	struct spdk_posix_sock *sock = __posix_sock(_sock);
+	uint8_t byte;
+	int rc;
 
-// 	rc = recv(sock->fd, &byte, 1, MSG_PEEK);
-// 	if (rc == 0) {
-// 		return false;
-// 	}
+	// rc = recv(sock->fd, &byte, 1, MSG_PEEK);
+	// if (rc == 0) {
+	// 	return false;
+	// }
 
-// 	if (rc < 0) {
-// 		if (errno == EAGAIN || errno == EWOULDBLOCK) {
-// 			return true;
-// 		}
+	// if (rc < 0) {
+	// 	if (errno == EAGAIN || errno == EWOULDBLOCK) {
+	// 		return true;
+	// 	}
 
-// 		return false;
-// 	}
+	// 	return false;
+	// }
 
-// 	return true;
-// }
+	return true;
+}
 
-// static int
-// posix_sock_get_placement_id(struct spdk_sock *_sock, int *placement_id)
-// {
-// 	int rc = -1;
+static int
+ucx_sock_get_placement_id(struct spdk_sock *_sock, int *placement_id)
+{
+	int rc = -1;
 
-// #if defined(SO_INCOMING_NAPI_ID)
-// 	struct spdk_posix_sock *sock = __posix_sock(_sock);
-// 	socklen_t salen = sizeof(int);
+#if defined(SO_INCOMING_NAPI_ID)
+	struct spdk_posix_sock *sock = __posix_sock(_sock);
+	socklen_t salen = sizeof(int);
 
-// 	rc = getsockopt(sock->fd, SOL_SOCKET, SO_INCOMING_NAPI_ID, placement_id, &salen);
-// 	if (rc != 0) {
-// 		SPDK_ERRLOG("getsockopt() failed (errno=%d)\n", errno);
-// 	}
+	rc = getsockopt(sock->fd, SOL_SOCKET, SO_INCOMING_NAPI_ID, placement_id, &salen);
+	if (rc != 0) {
+		SPDK_ERRLOG("getsockopt() failed (errno=%d)\n", errno);
+	}
 
-// #endif
-// 	return rc;
-// }
+#endif
+	return rc;
+}
 
 static struct spdk_sock_group_impl *
 ucx_sock_group_impl_create(void)
@@ -1240,251 +1210,251 @@ ucx_sock_group_impl_create(void)
 	return &group_impl->base;
 }
 
-// static int
-// posix_sock_group_impl_add_sock(struct spdk_sock_group_impl *_group, struct spdk_sock *_sock)
-// {
-// 	struct spdk_posix_sock_group_impl *group = __posix_group_impl(_group);
-// 	struct spdk_posix_sock *sock = __posix_sock(_sock);
-// 	int rc;
+static int
+ucx_sock_group_impl_add_sock(struct spdk_sock_group_impl *_group, struct spdk_sock *_sock)
+{
+	struct spdk_posix_sock_group_impl *group = __posix_group_impl(_group);
+	struct spdk_posix_sock *sock = __posix_sock(_sock);
+	int rc;
 
-// #if defined(__linux__)
-// 	struct epoll_event event;
+#if defined(__linux__)
+	struct epoll_event event;
 
-// 	memset(&event, 0, sizeof(event));
-// 	/* EPOLLERR is always on even if we don't set it, but be explicit for clarity */
-// 	event.events = EPOLLIN | EPOLLERR;
-// 	event.data.ptr = sock;
+	memset(&event, 0, sizeof(event));
+	/* EPOLLERR is always on even if we don't set it, but be explicit for clarity */
+	event.events = EPOLLIN | EPOLLERR;
+	event.data.ptr = sock;
 
-// 	rc = epoll_ctl(group->fd, EPOLL_CTL_ADD, sock->fd, &event);
-// #elif defined(__FreeBSD__)
-// 	struct kevent event;
-// 	struct timespec ts = {0};
+	rc = epoll_ctl(group->fd, EPOLL_CTL_ADD, sock->fd, &event);
+#elif defined(__FreeBSD__)
+	struct kevent event;
+	struct timespec ts = {0};
 
-// 	EV_SET(&event, sock->fd, EVFILT_READ, EV_ADD, 0, 0, sock);
+	EV_SET(&event, sock->fd, EVFILT_READ, EV_ADD, 0, 0, sock);
 
-// 	rc = kevent(group->fd, &event, 1, NULL, 0, &ts);
-// #endif
+	rc = kevent(group->fd, &event, 1, NULL, 0, &ts);
+#endif
 
-// 	/* switched from another polling group due to scheduling */
-// 	if (spdk_unlikely(sock->recv_pipe != NULL  &&
-// 			  (spdk_pipe_reader_bytes_available(sock->recv_pipe) > 0))) {
-// 		assert(sock->pending_recv == false);
-// 		sock->pending_recv = true;
-// 		TAILQ_INSERT_TAIL(&group->pending_recv, sock, link);
-// 	}
+	/* switched from another polling group due to scheduling */
+	if (spdk_unlikely(sock->recv_pipe != NULL  &&
+			  (spdk_pipe_reader_bytes_available(sock->recv_pipe) > 0))) {
+		assert(sock->pending_recv == false);
+		sock->pending_recv = true;
+		TAILQ_INSERT_TAIL(&group->pending_recv, sock, link);
+	}
 
-// 	return rc;
-// }
+	return rc;
+}
 
-// static int
-// posix_sock_group_impl_remove_sock(struct spdk_sock_group_impl *_group, struct spdk_sock *_sock)
-// {
-// 	struct spdk_posix_sock_group_impl *group = __posix_group_impl(_group);
-// 	struct spdk_posix_sock *sock = __posix_sock(_sock);
-// 	int rc;
+static int
+ucx_sock_group_impl_remove_sock(struct spdk_sock_group_impl *_group, struct spdk_sock *_sock)
+{
+	struct spdk_posix_sock_group_impl *group = __posix_group_impl(_group);
+	struct spdk_posix_sock *sock = __posix_sock(_sock);
+	int rc;
 
-// 	if (sock->recv_pipe != NULL) {
-// 		if (spdk_pipe_reader_bytes_available(sock->recv_pipe) > 0) {
-// 			TAILQ_REMOVE(&group->pending_recv, sock, link);
-// 			sock->pending_recv = false;
-// 		}
-// 		assert(sock->pending_recv == false);
-// 	}
+	if (sock->recv_pipe != NULL) {
+		if (spdk_pipe_reader_bytes_available(sock->recv_pipe) > 0) {
+			TAILQ_REMOVE(&group->pending_recv, sock, link);
+			sock->pending_recv = false;
+		}
+		assert(sock->pending_recv == false);
+	}
 
-// #if defined(__linux__)
-// 	struct epoll_event event;
+#if defined(__linux__)
+	struct epoll_event event;
 
-// 	/* Event parameter is ignored but some old kernel version still require it. */
-// 	rc = epoll_ctl(group->fd, EPOLL_CTL_DEL, sock->fd, &event);
-// #elif defined(__FreeBSD__)
-// 	struct kevent event;
-// 	struct timespec ts = {0};
+	/* Event parameter is ignored but some old kernel version still require it. */
+	rc = epoll_ctl(group->fd, EPOLL_CTL_DEL, sock->fd, &event);
+#elif defined(__FreeBSD__)
+	struct kevent event;
+	struct timespec ts = {0};
 
-// 	EV_SET(&event, sock->fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
+	EV_SET(&event, sock->fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
 
-// 	rc = kevent(group->fd, &event, 1, NULL, 0, &ts);
-// 	if (rc == 0 && event.flags & EV_ERROR) {
-// 		rc = -1;
-// 		errno = event.data;
-// 	}
-// #endif
+	rc = kevent(group->fd, &event, 1, NULL, 0, &ts);
+	if (rc == 0 && event.flags & EV_ERROR) {
+		rc = -1;
+		errno = event.data;
+	}
+#endif
 
-// 	spdk_sock_abort_requests(_sock);
+	spdk_sock_abort_requests(_sock);
 
-// 	return rc;
-// }
+	return rc;
+}
 
-// static int
-// posix_sock_group_impl_poll(struct spdk_sock_group_impl *_group, int max_events,
-// 			   struct spdk_sock **socks)
-// {
-// 	struct spdk_posix_sock_group_impl *group = __posix_group_impl(_group);
-// 	struct spdk_sock *sock, *tmp;
-// 	int num_events, i, rc;
-// 	struct spdk_posix_sock *psock, *ptmp;
-// #if defined(__linux__)
-// 	struct epoll_event events[MAX_EVENTS_PER_POLL];
-// #elif defined(__FreeBSD__)
-// 	struct kevent events[MAX_EVENTS_PER_POLL];
-// 	struct timespec ts = {0};
-// #endif
+static int
+ucx_sock_group_impl_poll(struct spdk_sock_group_impl *_group, int max_events,
+			   struct spdk_sock **socks)
+{
+	struct spdk_posix_sock_group_impl *group = __posix_group_impl(_group);
+	struct spdk_sock *sock, *tmp;
+	int num_events, i, rc;
+	struct spdk_posix_sock *psock, *ptmp;
+#if defined(__linux__)
+	struct epoll_event events[MAX_EVENTS_PER_POLL];
+#elif defined(__FreeBSD__)
+	struct kevent events[MAX_EVENTS_PER_POLL];
+	struct timespec ts = {0};
+#endif
 
-// 	/* This must be a TAILQ_FOREACH_SAFE because while flushing,
-// 	 * a completion callback could remove the sock from the
-// 	 * group. */
-// 	TAILQ_FOREACH_SAFE(sock, &_group->socks, link, tmp) {
-// 		rc = _sock_flush(sock);
-// 		if (rc) {
-// 			spdk_sock_abort_requests(sock);
-// 		}
-// 	}
+	/* This must be a TAILQ_FOREACH_SAFE because while flushing,
+	 * a completion callback could remove the sock from the
+	 * group. */
+	TAILQ_FOREACH_SAFE(sock, &_group->socks, link, tmp) {
+		rc = _sock_flush(sock);
+		if (rc) {
+			spdk_sock_abort_requests(sock);
+		}
+	}
 
-// #if defined(__linux__)
-// 	num_events = epoll_wait(group->fd, events, max_events, 0);
-// #elif defined(__FreeBSD__)
-// 	num_events = kevent(group->fd, NULL, 0, events, max_events, &ts);
-// #endif
+#if defined(__linux__)
+	num_events = epoll_wait(group->fd, events, max_events, 0);
+#elif defined(__FreeBSD__)
+	num_events = kevent(group->fd, NULL, 0, events, max_events, &ts);
+#endif
 
-// 	if (num_events == -1) {
-// 		return -1;
-// 	} else if (num_events == 0 && !TAILQ_EMPTY(&_group->socks)) {
-// 		uint8_t byte;
+	if (num_events == -1) {
+		return -1;
+	} else if (num_events == 0 && !TAILQ_EMPTY(&_group->socks)) {
+		uint8_t byte;
 
-// 		sock = TAILQ_FIRST(&_group->socks);
-// 		psock = __posix_sock(sock);
-// 		/* a recv is done here to busy poll the queue associated with
-// 		 * first socket in list and potentially reap incoming data.
-// 		 */
-// 		if (psock->so_priority) {
-// 			recv(psock->fd, &byte, 1, MSG_PEEK);
-// 		}
-// 	}
+		sock = TAILQ_FIRST(&_group->socks);
+		psock = __posix_sock(sock);
+		/* a recv is done here to busy poll the queue associated with
+		 * first socket in list and potentially reap incoming data.
+		 */
+		if (psock->so_priority) {
+			recv(psock->fd, &byte, 1, MSG_PEEK);
+		}
+	}
 
-// 	for (i = 0; i < num_events; i++) {
-// #if defined(__linux__)
-// 		sock = events[i].data.ptr;
-// 		psock = __posix_sock(sock);
+	for (i = 0; i < num_events; i++) {
+#if defined(__linux__)
+		sock = events[i].data.ptr;
+		psock = __posix_sock(sock);
 
-// #ifdef SPDK_ZEROCOPY
-// 		if (events[i].events & EPOLLERR) {
-// 			rc = _sock_check_zcopy(sock);
-// 			/* If the socket was closed or removed from
-// 			 * the group in response to a send ack, don't
-// 			 * add it to the array here. */
-// 			if (rc || sock->cb_fn == NULL) {
-// 				continue;
-// 			}
-// 		}
-// #endif
-// 		if ((events[i].events & EPOLLIN) == 0) {
-// 			continue;
-// 		}
+#ifdef SPDK_ZEROCOPY
+		if (events[i].events & EPOLLERR) {
+			rc = _sock_check_zcopy(sock);
+			/* If the socket was closed or removed from
+			 * the group in response to a send ack, don't
+			 * add it to the array here. */
+			if (rc || sock->cb_fn == NULL) {
+				continue;
+			}
+		}
+#endif
+		if ((events[i].events & EPOLLIN) == 0) {
+			continue;
+		}
 
-// #elif defined(__FreeBSD__)
-// 		sock = events[i].udata;
-// 		psock = __posix_sock(sock);
-// #endif
+#elif defined(__FreeBSD__)
+		sock = events[i].udata;
+		psock = __posix_sock(sock);
+#endif
 
-// 		/* If the socket does not already have recv pending, add it now */
-// 		if (!psock->pending_recv) {
-// 			psock->pending_recv = true;
-// 			TAILQ_INSERT_TAIL(&group->pending_recv, psock, link);
-// 		}
-// 	}
+		/* If the socket does not already have recv pending, add it now */
+		if (!psock->pending_recv) {
+			psock->pending_recv = true;
+			TAILQ_INSERT_TAIL(&group->pending_recv, psock, link);
+		}
+	}
 
-// 	num_events = 0;
+	num_events = 0;
 
-// 	TAILQ_FOREACH_SAFE(psock, &group->pending_recv, link, ptmp) {
-// 		if (num_events == max_events) {
-// 			break;
-// 		}
+	TAILQ_FOREACH_SAFE(psock, &group->pending_recv, link, ptmp) {
+		if (num_events == max_events) {
+			break;
+		}
 
-// 		socks[num_events++] = &psock->base;
-// 	}
+		socks[num_events++] = &psock->base;
+	}
 
-// 	/* Cycle the pending_recv list so that each time we poll things aren't
-// 	 * in the same order. */
-// 	for (i = 0; i < num_events; i++) {
-// 		psock = __posix_sock(socks[i]);
+	/* Cycle the pending_recv list so that each time we poll things aren't
+	 * in the same order. */
+	for (i = 0; i < num_events; i++) {
+		psock = __posix_sock(socks[i]);
 
-// 		TAILQ_REMOVE(&group->pending_recv, psock, link);
+		TAILQ_REMOVE(&group->pending_recv, psock, link);
 
-// 		if (psock->recv_pipe == NULL || spdk_pipe_reader_bytes_available(psock->recv_pipe) == 0) {
-// 			psock->pending_recv = false;
-// 		} else {
-// 			TAILQ_INSERT_TAIL(&group->pending_recv, psock, link);
-// 		}
+		if (psock->recv_pipe == NULL || spdk_pipe_reader_bytes_available(psock->recv_pipe) == 0) {
+			psock->pending_recv = false;
+		} else {
+			TAILQ_INSERT_TAIL(&group->pending_recv, psock, link);
+		}
 
-// 	}
+	}
 
-// 	return num_events;
-// }
+	return num_events;
+}
 
-// static int
-// posix_sock_group_impl_close(struct spdk_sock_group_impl *_group)
-// {
-// 	struct spdk_posix_sock_group_impl *group = __posix_group_impl(_group);
-// 	int rc;
+static int
+ucx_sock_group_impl_close(struct spdk_sock_group_impl *_group)
+{
+	struct spdk_posix_sock_group_impl *group = __posix_group_impl(_group);
+	int rc;
 
-// 	rc = close(group->fd);
-// 	free(group);
-// 	return rc;
-// }
+	rc = close(group->fd);
+	free(group);
+	return rc;
+}
 
-// static int
-// posix_sock_impl_get_opts(struct spdk_sock_impl_opts *opts, size_t *len)
-// {
-// 	if (!opts || !len) {
-// 		errno = EINVAL;
-// 		return -1;
-// 	}
+static int
+ucx_sock_impl_get_opts(struct spdk_sock_impl_opts *opts, size_t *len)
+{
+	if (!opts || !len) {
+		errno = EINVAL;
+		return -1;
+	}
 
-// #define FIELD_OK(field) \
-// 	offsetof(struct spdk_sock_impl_opts, field) + sizeof(opts->field) <= *len
+#define FIELD_OK(field) \
+	offsetof(struct spdk_sock_impl_opts, field) + sizeof(opts->field) <= *len
 
-// #define GET_FIELD(field) \
-// 	if (FIELD_OK(field)) { \
-// 		opts->field = g_spdk_posix_sock_impl_opts.field; \
-// 	}
+#define GET_FIELD(field) \
+	if (FIELD_OK(field)) { \
+		opts->field = g_spdk_posix_sock_impl_opts.field; \
+	}
 
-// 	GET_FIELD(recv_buf_size);
-// 	GET_FIELD(send_buf_size);
-// 	GET_FIELD(enable_recv_pipe);
-// 	GET_FIELD(enable_zerocopy_send);
+	GET_FIELD(recv_buf_size);
+	GET_FIELD(send_buf_size);
+	GET_FIELD(enable_recv_pipe);
+	GET_FIELD(enable_zerocopy_send);
 
-// #undef GET_FIELD
-// #undef FIELD_OK
+#undef GET_FIELD
+#undef FIELD_OK
 
-// 	*len = spdk_min(*len, sizeof(g_spdk_posix_sock_impl_opts));
-// 	return 0;
-// }
+	*len = spdk_min(*len, sizeof(g_spdk_posix_sock_impl_opts));
+	return 0;
+}
 
-// static int
-// ucx_sock_impl_set_opts(const struct spdk_sock_impl_opts *opts, size_t len)
-// {
-// 	if (!opts) {
-// 		errno = EINVAL;
-// 		return -1;
-// 	}
+static int
+ucx_sock_impl_set_opts(const struct spdk_sock_impl_opts *opts, size_t len)
+{
+	if (!opts) {
+		errno = EINVAL;
+		return -1;
+	}
 
-// #define FIELD_OK(field) \
-// 	offsetof(struct spdk_sock_impl_opts, field) + sizeof(opts->field) <= len
+#define FIELD_OK(field) \
+	offsetof(struct spdk_sock_impl_opts, field) + sizeof(opts->field) <= len
 
-// #define SET_FIELD(field) \
-// 	if (FIELD_OK(field)) { \
-// 		g_spdk_posix_sock_impl_opts.field = opts->field; \
-// 	}
+#define SET_FIELD(field) \
+	if (FIELD_OK(field)) { \
+		g_spdk_posix_sock_impl_opts.field = opts->field; \
+	}
 
-// 	SET_FIELD(recv_buf_size);
-// 	SET_FIELD(send_buf_size);
-// 	SET_FIELD(enable_recv_pipe);
-// 	SET_FIELD(enable_zerocopy_send);
+	SET_FIELD(recv_buf_size);
+	SET_FIELD(send_buf_size);
+	SET_FIELD(enable_recv_pipe);
+	SET_FIELD(enable_zerocopy_send);
 
-// #undef SET_FIELD
-// #undef FIELD_OK
+#undef SET_FIELD
+#undef FIELD_OK
 
-// 	return 0;
-// }
+	return 0;
+}
 
 
 static struct spdk_net_impl g_ucx_net_impl = {
@@ -1494,25 +1464,32 @@ static struct spdk_net_impl g_ucx_net_impl = {
 	.listen		= ucx_sock_listen,
 	.accept		= ucx_sock_accept,
 	.close		= ucx_sock_close,
-	// .recv		= ucx_sock_recv,
-	// .readv		= ucx_sock_readv,
-	// .writev		= ucx_sock_writev,
-	// .writev_async	= posix_sock_writev_async,
-	// .flush		= posix_sock_flush,
-	// .set_recvlowat	= posix_sock_set_recvlowat,
-	// .set_recvbuf	= posix_sock_set_recvbuf,
-	// .set_sendbuf	= posix_sock_set_sendbuf,
-	// .is_ipv6	= posix_sock_is_ipv6,
+	.recv		= ucx_sock_recv,
+	.readv		= ucx_sock_readv,
+	.writev		= ucx_sock_writev,
+	.writev_async	= ucx_sock_writev_async,
+	.flush		= ucx_sock_flush,
+	
+	//NOT FULLY IMPLEMENTED
+	.set_recvlowat	= ucx_sock_set_recvlowat,
+	.set_recvbuf	= ucx_sock_set_recvbuf,
+	.set_sendbuf	= ucx_sock_set_sendbuf,
+	.is_ipv6	= ucx_sock_is_ipv6,
 	.is_ipv4	= ucx_sock_is_ipv4,
-	// .is_connected	= posix_sock_is_connected,
-	// .get_placement_id	= posix_sock_get_placement_id,
+
+
+	.is_connected	= ucx_sock_is_connected,
+	.get_placement_id	= ucx_sock_get_placement_id,
+
+	// not implement
 	.group_impl_create	= ucx_sock_group_impl_create,
-	// .group_impl_add_sock	= posix_sock_group_impl_add_sock,
-	// .group_impl_remove_sock = posix_sock_group_impl_remove_sock,
-	// .group_impl_poll	= posix_sock_group_impl_poll,
-	// .group_impl_close	= posix_sock_group_impl_close,
-	// .get_opts	= posix_sock_impl_get_opts,
-	// .set_opts	= posix_sock_impl_set_opts,
+	.group_impl_add_sock	= ucx_sock_group_impl_add_sock,
+	.group_impl_remove_sock = ucx_sock_group_impl_remove_sock,
+	.group_impl_poll	= ucx_sock_group_impl_poll,
+	.group_impl_close	= ucx_sock_group_impl_close,
+
+	.get_opts	= ucx_sock_impl_get_opts,
+	.set_opts	= ucx_sock_impl_set_opts,
 };
 
 SPDK_NET_IMPL_REGISTER(ucx, &g_ucx_net_impl, DEFAULT_SOCK_PRIORITY);
